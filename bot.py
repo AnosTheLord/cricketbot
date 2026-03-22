@@ -12,9 +12,9 @@ CHAT_ID = os.getenv("CHAT_ID")
 CRIC_API_KEY = os.getenv("CRIC_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 🤖 GEMINI
+# 🤖 GEMINI (UPDATED MODEL)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # 📡 API
 url = f"https://api.cricapi.com/v1/currentMatches?apikey={CRIC_API_KEY}&offset=0"
@@ -45,16 +45,32 @@ def send_photo(path, caption=""):
         files={"photo": open(path, "rb")}
     )
 
-# 🤖 AI TEXT
+# 🤖 FIXED GEMINI FUNCTION
 def generate_text(prompt):
     try:
-        return model.generate_content(prompt).text.strip()
-    except:
-        return prompt
+        response = model.generate_content(prompt)
+
+        if response and hasattr(response, "text") and response.text:
+            text = response.text.strip()
+
+            # ❌ Prevent returning prompt
+            if prompt.lower() in text.lower():
+                return None
+
+            return text
+
+        return None
+
+    except Exception as e:
+        print("Gemini Error:", e)
+        return None
 
 # 🎨 POSTER
 def create_poster(t1, t2, result):
-    headline = generate_text(f"Short cricket headline: {t1} vs {t2}, {result}")
+    headline = generate_text(f"Short cricket headline under 8 words: {t1} vs {t2}, {result}")
+
+    if not headline:
+        headline = "MATCH RESULT"
 
     img = Image.new('RGB', (900, 500), color=(15, 15, 40))
     draw = ImageDraw.Draw(img)
@@ -74,27 +90,41 @@ def create_poster(t1, t2, result):
     img.save("poster.png")
     return "poster.png"
 
-# 🎯 FILTER
+# 🎯 MATCH FILTER
 def select_matches(matches):
     india = [m for m in matches if "India" in m.get("teams", [])]
     return india if india else matches
 
-# 😴 ENGAGEMENT (2 HOURS + UNIQUE)
+# 🔥 ENGAGEMENT (45 MIN + SMART + UNIQUE)
 def post_engagement():
     global last_engagement_time, used_posts
 
-    if time.time() - last_engagement_time < 7200:
+    # ⏱️ 45 minutes = 2700 seconds
+    if time.time() - last_engagement_time < 2700:
         return
 
     prompts = [
-        "Create a viral cricket debate under 15 words with emojis",
-        "Create a cricket quiz question with emojis",
-        "Create a bold cricket opinion",
-        "Create a hype cricket post",
-        "Create a controversial cricket take"
+        "viral cricket debate",
+        "fun cricket quiz",
+        "bold cricket opinion",
+        "cricket hype post",
+        "controversial cricket take"
     ]
 
-    msg = generate_text(random.choice(prompts))
+    prompt = random.choice(prompts)
+
+    msg = generate_text(f"Write a short {prompt} under 15 words with emojis")
+
+    # 🔥 Fallback if Gemini fails
+    if not msg:
+        fallback_posts = [
+            "🔥 Kohli vs Babar 👀 Who wins?",
+            "🏏 Guess: Highest ODI score ever?",
+            "💥 Who is your GOAT in cricket?",
+            "🔥 Match day vibes are real!",
+            "👀 One player you trust in pressure?"
+        ]
+        msg = random.choice(fallback_posts)
 
     if msg in used_posts:
         return
@@ -124,9 +154,12 @@ def post_prematch(match):
         return
 
     t1, t2 = match["teams"]
-    msg = generate_text(f"Hype cricket match: {t1} vs {t2}")
+    caption = generate_text(f"Hype cricket match: {t1} vs {t2}")
 
-    send_telegram(f"🚨 *MATCH STARTING*\n\n🏏 *{t1}* 🆚 *{t2}*\n🕒 *{get_time(match)}*\n\n🔥 {msg}")
+    if not caption:
+        caption = "Big match coming up!"
+
+    send_telegram(f"🚨 *MATCH STARTING*\n\n🏏 *{t1}* 🆚 *{t2}*\n🕒 *{get_time(match)}*\n\n🔥 {caption}")
     sent_prematch.add(mid)
 
 # 🎯 TOSS
@@ -140,6 +173,10 @@ def post_toss(match):
 
     if toss:
         msg = generate_text(f"{toss} won toss and chose to {choice}")
+
+        if not msg:
+            msg = f"{toss} won the toss and chose to {choice}"
+
         send_telegram(f"🎯 *TOSS UPDATE*\n\n{msg}")
         sent_toss.add(mid)
 
@@ -176,9 +213,14 @@ def post_result(match):
         send_telegram(f"🏆 *{status}*")
 
         poster = create_poster(t1, t2, status)
+
         caption = generate_text(f"{status} make exciting caption")
 
+        if not caption:
+            caption = status
+
         send_photo(poster, f"🔥 {caption}")
+
         sent_results.add(mid)
 
 # 🔁 LOOP
