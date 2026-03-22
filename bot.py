@@ -6,62 +6,55 @@ from datetime import datetime, timedelta
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont
 
-# 🔐 ENV VARIABLES (IMPORTANT FOR RAILWAY)
+# 🔐 ENV VARIABLES
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CRIC_API_KEY = os.getenv("CRIC_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 🤖 GEMINI SETUP
+# 🤖 GEMINI
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-pro")
 
 # 📡 API
 url = f"https://api.cricapi.com/v1/currentMatches?apikey={CRIC_API_KEY}&offset=0"
 
-# 🧠 MEMORY (ANTI-SPAM)
+# 🧠 MEMORY
 sent_results = set()
 sent_toss = set()
 sent_prematch = set()
 last_score = {}
+last_live_time = {}
 
-# 📢 SEND MESSAGE (BOLD ENABLED)
+# ⏱️ ENGAGEMENT CONTROL
+last_engagement_time = 0
+used_posts = []
+
+# 📢 SEND MESSAGE
 def send_telegram(message):
-    send_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    data = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-    requests.post(send_url, data=data)
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    )
 
 # 📢 SEND PHOTO
-def send_photo(photo_path, caption=""):
-    send_url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-    data = {
-        "chat_id": CHAT_ID,
-        "caption": caption,
-        "parse_mode": "Markdown"
-    }
-    files = {"photo": open(photo_path, "rb")}
-    requests.post(send_url, data=data, files=files)
+def send_photo(path, caption=""):
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
+        data={"chat_id": CHAT_ID, "caption": caption, "parse_mode": "Markdown"},
+        files={"photo": open(path, "rb")}
+    )
 
-# 🤖 GEMINI TEXT
+# 🤖 AI TEXT
 def generate_text(prompt):
     try:
-        res = model.generate_content(prompt)
-        return res.text.strip()
+        return model.generate_content(prompt).text.strip()
     except:
         return prompt
 
-# 🎨 POSTER TEXT
-def generate_poster_text(team1, team2, result):
-    prompt = f"Create a bold short cricket headline: {team1} vs {team2}, {result}"
-    return generate_text(prompt)
-
-# 🎨 CREATE POSTER
-def create_poster(team1, team2, result):
-    headline = generate_poster_text(team1, team2, result)
+# 🎨 POSTER
+def create_poster(t1, t2, result):
+    headline = generate_text(f"Short cricket headline: {t1} vs {t2}, {result}")
 
     img = Image.new('RGB', (900, 500), color=(15, 15, 40))
     draw = ImageDraw.Draw(img)
@@ -74,66 +67,66 @@ def create_poster(team1, team2, result):
         big = mid = small = ImageFont.load_default()
 
     draw.text((50, 50), "MATCH RESULT", font=small, fill="gray")
-    draw.text((50, 150), f"{team1} vs {team2}", font=mid, fill="white")
+    draw.text((50, 150), f"{t1} vs {t2}", font=mid, fill="white")
     draw.text((50, 250), headline, font=big, fill="yellow")
     draw.text((50, 380), result, font=small, fill="lightgreen")
 
-    filename = "poster.png"
-    img.save(filename)
-    return filename
+    img.save("poster.png")
+    return "poster.png"
 
-# 🎯 MATCH FILTER (INDIA PRIORITY)
+# 🎯 FILTER
 def select_matches(matches):
-    india = []
-    others = []
+    india = [m for m in matches if "India" in m.get("teams", [])]
+    return india if india else matches
 
-    for m in matches:
-        teams = m.get("teams", [])
-        if "India" in teams:
-            india.append(m)
-        else:
-            others.append(m)
-
-    return india if india else others
-
-# 😴 ENGAGEMENT (NO MATCH)
+# 😴 ENGAGEMENT (2 HOURS + UNIQUE)
 def post_engagement():
-    msg = generate_text("Create short engaging cricket content")
-    send_telegram(f"🔥 {msg}")
+    global last_engagement_time, used_posts
 
-# 🕒 TIME CONVERT
+    if time.time() - last_engagement_time < 7200:
+        return
+
+    prompts = [
+        "Create a viral cricket debate under 15 words with emojis",
+        "Create a cricket quiz question with emojis",
+        "Create a bold cricket opinion",
+        "Create a hype cricket post",
+        "Create a controversial cricket take"
+    ]
+
+    msg = generate_text(random.choice(prompts))
+
+    if msg in used_posts:
+        return
+
+    used_posts.append(msg)
+    if len(used_posts) > 10:
+        used_posts.pop(0)
+
+    send_telegram(f"🔥 {msg}")
+    last_engagement_time = time.time()
+
+# 🕒 TIME
 def get_time(match):
     dt = match.get("dateTimeGMT")
     if not dt:
-        return "Time not available"
-
+        return "Time N/A"
     try:
-        utc = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S")
-        ist = utc + timedelta(hours=5, minutes=30)
+        ist = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)
         return ist.strftime("%I:%M %p IST")
     except:
         return "Time error"
 
-# 🚨 PRE MATCH
+# 🚨 PREMATCH
 def post_prematch(match):
     mid = match["id"]
     if mid in sent_prematch:
         return
 
     t1, t2 = match["teams"]
-    time_str = get_time(match)
+    msg = generate_text(f"Hype cricket match: {t1} vs {t2}")
 
-    caption = generate_text(f"Hype cricket match: {t1} vs {t2}")
-
-    msg = f"""
-🚨 *MATCH STARTING*
-
-🏏 *{t1}* 🆚 *{t2}*
-🕒 *{time_str}*
-
-🔥 {caption}
-"""
-    send_telegram(msg)
+    send_telegram(f"🚨 *MATCH STARTING*\n\n🏏 *{t1}* 🆚 *{t2}*\n🕒 *{get_time(match)}*\n\n🔥 {msg}")
     sent_prematch.add(mid)
 
 # 🎯 TOSS
@@ -150,7 +143,7 @@ def post_toss(match):
         send_telegram(f"🎯 *TOSS UPDATE*\n\n{msg}")
         sent_toss.add(mid)
 
-# 📊 LIVE SCORE (STYLE 3 + BOLD)
+# 📊 LIVE SCORE (5 MIN DELAY)
 def post_live_score(match):
     mid = match["id"]
     score = match.get("score", [])
@@ -158,39 +151,25 @@ def post_live_score(match):
     if not score:
         return
 
+    if mid in last_live_time and time.time() - last_live_time[mid] < 300:
+        return
+
     formatted = ""
-
-    for inning in score:
-        name = inning.get("inning", "")
-        runs = inning.get("r", 0)
-        wickets = inning.get("w", 0)
-        overs = inning.get("o", 0)
-
-        formatted += f"🏏 *{name}*\n"
-        formatted += f"📊 *{runs}/{wickets}* • {overs} ov\n\n"
+    for i in score:
+        formatted += f"🏏 *{i.get('inning','')}*\n📊 *{i.get('r',0)}/{i.get('w',0)}* • {i.get('o',0)} ov\n\n"
 
     if last_score.get(mid) != formatted:
-        msg = f"""
-📡 *LIVE UPDATE*
-
-🏏 *{match['teams'][0].upper()}* 🆚 *{match['teams'][1].upper()}*
-
-━━━━━━━━━━━━━━
-{formatted}━━━━━━━━━━━━━━
-
-🔥 *Stay tuned for next update!*
-"""
-        send_telegram(msg)
+        send_telegram(f"📡 *LIVE UPDATE*\n\n🏏 *{match['teams'][0].upper()}* 🆚 *{match['teams'][1].upper()}*\n\n━━━━━━━━━━━━━━\n{formatted}━━━━━━━━━━━━━━")
         last_score[mid] = formatted
+        last_live_time[mid] = time.time()
 
-# 🏆 RESULT (TEXT + POSTER)
+# 🏆 RESULT
 def post_result(match):
     mid = match["id"]
     if mid in sent_results:
         return
 
     status = match.get("status", "")
-
     if "won" in status.lower():
         t1, t2 = match["teams"]
 
@@ -200,14 +179,12 @@ def post_result(match):
         caption = generate_text(f"{status} make exciting caption")
 
         send_photo(poster, f"🔥 {caption}")
-
         sent_results.add(mid)
 
-# 🔁 MAIN LOOP
+# 🔁 LOOP
 while True:
     try:
-        res = requests.get(url).json()
-        matches = res.get("data", [])
+        matches = requests.get(url).json().get("data", [])
 
         selected = select_matches(matches)
 
