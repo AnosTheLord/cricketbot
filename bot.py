@@ -16,7 +16,7 @@ CRIC_API_KEY = os.getenv("CRIC_API_KEY")
 # ✅ MULTI CHANNEL SUPPORT
 CHANNELS = [
     "@The3rdUmpire",
-    "@+nf9XmHWubCJhYzI1"
+    "-1001176764503"
 ]
 
 bot = Bot(token=TOKEN)
