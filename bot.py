@@ -1,246 +1,226 @@
-import requests
-import time
 import random
+import asyncio
 import os
-from datetime import datetime, timedelta
-import google.generativeai as genai
-from PIL import Image, ImageDraw, ImageFont
+import datetime
+import requests
+from telegram import Bot
+from google import genai
 
-# 🔐 ENV VARIABLES
+# =========================
+# 🔐 ENV
+# =========================
 TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-CRIC_API_KEY = os.getenv("CRIC_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+CRIC_API_KEY = os.getenv("CRIC_API_KEY")
 
-# 🤖 GEMINI (UPDATED MODEL)
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
+# ✅ MULTI CHANNEL SUPPORT
+CHANNELS = [
+    "@your_channel1",
+    "@your_channel2"
+]
 
-# 📡 API
-url = f"https://api.cricapi.com/v1/currentMatches?apikey={CRIC_API_KEY}&offset=0"
+bot = Bot(token=TOKEN)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 🧠 MEMORY
-sent_results = set()
-sent_toss = set()
-sent_prematch = set()
-last_score = {}
-last_live_time = {}
+# =========================
+# ⚙️ CONFIG
+# =========================
+FAST_INTERVAL = 1800   # 30 min (match day)
+SLOW_INTERVAL = 5400   # 90 min (no match)
 
-# ⏱️ ENGAGEMENT CONTROL
-last_engagement_time = 0
-used_posts = []
-
-# 📢 SEND MESSAGE
-def send_telegram(message):
-    requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    )
-
-# 📢 SEND PHOTO
-def send_photo(path, caption=""):
-    requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
-        data={"chat_id": CHAT_ID, "caption": caption, "parse_mode": "Markdown"},
-        files={"photo": open(path, "rb")}
-    )
-
-# 🤖 FIXED GEMINI FUNCTION
-def generate_text(prompt):
+# =========================
+# 🌍 MATCH CHECK
+# =========================
+def has_match_today():
     try:
-        response = model.generate_content(prompt)
+        url = f"https://api.cricapi.com/v1/cricScore?apikey={CRIC_API_KEY}"
+        data = requests.get(url).json()
 
-        if response and hasattr(response, "text") and response.text:
-            text = response.text.strip()
+        today = str(datetime.date.today())
 
-            # ❌ Prevent returning prompt
-            if prompt.lower() in text.lower():
-                return None
-
-            return text
-
-        return None
-
-    except Exception as e:
-        print("Gemini Error:", e)
-        return None
-
-# 🎨 POSTER
-def create_poster(t1, t2, result):
-    headline = generate_text(f"Short cricket headline under 8 words: {t1} vs {t2}, {result}")
-
-    if not headline:
-        headline = "MATCH RESULT"
-
-    img = Image.new('RGB', (900, 500), color=(15, 15, 40))
-    draw = ImageDraw.Draw(img)
-
-    try:
-        big = ImageFont.truetype("arial.ttf", 60)
-        mid = ImageFont.truetype("arial.ttf", 40)
-        small = ImageFont.truetype("arial.ttf", 28)
+        for m in data.get("data", []):
+            if today in m.get("dateTimeGMT", ""):
+                return True
+        return False
     except:
-        big = mid = small = ImageFont.load_default()
+        return False
 
-    draw.text((50, 50), "MATCH RESULT", font=small, fill="gray")
-    draw.text((50, 150), f"{t1} vs {t2}", font=mid, fill="white")
-    draw.text((50, 250), headline, font=big, fill="yellow")
-    draw.text((50, 380), result, font=small, fill="lightgreen")
+# =========================
+# 🧠 TIME PHASE
+# =========================
+def get_phase():
+    hour = datetime.datetime.now().hour
 
-    img.save("poster.png")
-    return "poster.png"
+    if 6 <= hour < 12:
+        return "morning"
+    elif 12 <= hour < 18:
+        return "afternoon"
+    elif 18 <= hour < 23:
+        return "evening"
+    else:
+        return "night"
 
-# 🎯 MATCH FILTER
-def select_matches(matches):
-    india = [m for m in matches if "India" in m.get("teams", [])]
-    return india if india else matches
+# =========================
+# 🔥 CONTENT SYSTEM
+# =========================
 
-# 🔥 ENGAGEMENT (45 MIN + SMART + UNIQUE)
-def post_engagement():
-    global last_engagement_time, used_posts
+def hook_curiosity():
+    return random.choice([
+        "👀 Aaj kuch alag hone wala hai...",
+        "⚠️ Aaj ka match simple nahi hai...",
+        "💣 Hidden factor hai...",
+        "🔥 Aaj ka game predictable nahi hai...",
+        "👀 Sirf 1% log samjhenge...",
+        "💭 Result shock kar sakta hai...",
+        "🚨 Clue mil chuka hai...",
+        "👀 Repeat karo aur samajho..."
+    ])
 
-    # ⏱️ 45 minutes = 2700 seconds
-    if time.time() - last_engagement_time < 2700:
-        return
+def hook_fomo():
+    return random.choice([
+        "🚨 LAST MOMENT UPDATE 🚨",
+        "⚡ Final decision time!",
+        "🔥 Abhi decide karo...",
+        "⏳ Time khatam ho raha hai...",
+        "🚨 Last chance...",
+        "💣 Final signal mil gaya..."
+    ])
 
-    prompts = [
-        "viral cricket debate",
-        "fun cricket quiz",
-        "bold cricket opinion",
-        "cricket hype post",
-        "controversial cricket take"
+def hook_controversy():
+    return random.choice([
+        "👀 Yeh match suspicious lag raha hai...",
+        "💣 Public ek side ja rahi hai… risky 👀",
+        "⚠️ Kuch toh gadbad hai...",
+        "🧠 Smart users opposite ja rahe hain...",
+        "🔥 Itna easy match kabhi hota hai kya?"
+    ])
+
+def hook_authority():
+    return random.choice([
+        "📊 Data kuch aur keh raha hai...",
+        "🧠 Experts ka signal aa gaya...",
+        "📈 Stats strong side dikha rahe...",
+        "⚡ Pattern repeat ho raha hai..."
+    ])
+
+def reaction_post():
+    return random.choice([
+        "👍 Like karo agar confident ho",
+        "🔥 Fire drop karo agar ready ho",
+        "💯 Real players react karenge",
+        "⚡ Silent mat rehna… react karo"
+    ])
+
+def fake_poll_post():
+    return random.choice([
+        "🏏 Winner?\n\n👍 Team A\n🔥 Team B",
+        "⚡ Match?\n\n❤️ Easy\n😱 Tough",
+        "📊 Score?\n\n🔥 High\n🧊 Low"
+    ])
+
+def trap_post():
+    return random.choice([
+        "👀 Jo samajh gaya wahi jeetega",
+        "⚠️ Sabko samajh nahi aayega",
+        "💣 Yeh normal match nahi hai",
+        "🧠 Sirf smart log pakdenge"
+    ])
+
+# =========================
+# 🤖 AI POST
+# =========================
+def ai_post(phase):
+    prompt = f"""
+Create a short cricket Telegram engagement post.
+Time: {phase}
+Make it engaging and human.
+1-2 lines only.
+"""
+
+    try:
+        res = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
+        return res.text.strip()
+    except:
+        return "🔥 Aaj ka match interesting lag raha hai..."
+
+# =========================
+# 🎨 STYLE SYSTEM
+# =========================
+def style_text(text):
+    styles = [
+        lambda t: t,
+        lambda t: f"🔥 {t}",
+        lambda t: f"{t}\n\n⚡",
+        lambda t: t.upper(),
+        lambda t: f"\n{t}\n",
+        lambda t: f"🚨 {t} 🚨",
+        lambda t: f"💬 {t}",
+        lambda t: f"🔥🔥 {t} 🔥🔥",
+        lambda t: f"👇 {t}",
+    ]
+    return random.choice(styles)(text)
+
+# =========================
+# 🎭 GENERATOR
+# =========================
+def generate_post(phase):
+
+    pool = [
+        hook_curiosity,
+        hook_fomo,
+        hook_controversy,
+        hook_authority,
+        reaction_post,
+        fake_poll_post,
+        trap_post
     ]
 
-    prompt = random.choice(prompts)
+    if random.random() < 0.85:
+        raw = random.choice(pool)()
+    else:
+        raw = ai_post(phase)
 
-    msg = generate_text(f"Write a short {prompt} under 15 words with emojis")
+    return style_text(raw)
 
-    # 🔥 Fallback if Gemini fails
-    if not msg:
-        fallback_posts = [
-            "🔥 Kohli vs Babar 👀 Who wins?",
-            "🏏 Guess: Highest ODI score ever?",
-            "💥 Who is your GOAT in cricket?",
-            "🔥 Match day vibes are real!",
-            "👀 One player you trust in pressure?"
-        ]
-        msg = random.choice(fallback_posts)
+# =========================
+# 📤 SEND MULTI CHANNEL
+# =========================
+async def send_all(msg):
+    for ch in CHANNELS:
+        try:
+            await bot.send_message(chat_id=ch, text=msg)
+        except Exception as e:
+            print(f"❌ Failed {ch}: {e}")
 
-    if msg in used_posts:
-        return
+# =========================
+# 🚀 MAIN LOOP
+# =========================
+async def run_bot():
+    while True:
+        try:
+            phase = get_phase()
+            match_today = has_match_today()
 
-    used_posts.append(msg)
-    if len(used_posts) > 10:
-        used_posts.pop(0)
+            msg = generate_post(phase)
 
-    send_telegram(f"🔥 {msg}")
-    last_engagement_time = time.time()
+            await send_all(msg)
 
-# 🕒 TIME
-def get_time(match):
-    dt = match.get("dateTimeGMT")
-    if not dt:
-        return "Time N/A"
-    try:
-        ist = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)
-        return ist.strftime("%I:%M %p IST")
-    except:
-        return "Time error"
+            print(f"✅ Posted ({phase})")
 
-# 🚨 PREMATCH
-def post_prematch(match):
-    mid = match["id"]
-    if mid in sent_prematch:
-        return
+            if match_today:
+                await asyncio.sleep(FAST_INTERVAL)
+            else:
+                await asyncio.sleep(SLOW_INTERVAL)
 
-    t1, t2 = match["teams"]
-    caption = generate_text(f"Hype cricket match: {t1} vs {t2}")
+        except Exception as e:
+            print("❌ Error:", e)
+            await asyncio.sleep(60)
 
-    if not caption:
-        caption = "Big match coming up!"
-
-    send_telegram(f"🚨 *MATCH STARTING*\n\n🏏 *{t1}* 🆚 *{t2}*\n🕒 *{get_time(match)}*\n\n🔥 {caption}")
-    sent_prematch.add(mid)
-
-# 🎯 TOSS
-def post_toss(match):
-    mid = match["id"]
-    if mid in sent_toss:
-        return
-
-    toss = match.get("tossWinner")
-    choice = match.get("tossChoice")
-
-    if toss:
-        msg = generate_text(f"{toss} won toss and chose to {choice}")
-
-        if not msg:
-            msg = f"{toss} won the toss and chose to {choice}"
-
-        send_telegram(f"🎯 *TOSS UPDATE*\n\n{msg}")
-        sent_toss.add(mid)
-
-# 📊 LIVE SCORE (5 MIN DELAY)
-def post_live_score(match):
-    mid = match["id"]
-    score = match.get("score", [])
-
-    if not score:
-        return
-
-    if mid in last_live_time and time.time() - last_live_time[mid] < 300:
-        return
-
-    formatted = ""
-    for i in score:
-        formatted += f"🏏 *{i.get('inning','')}*\n📊 *{i.get('r',0)}/{i.get('w',0)}* • {i.get('o',0)} ov\n\n"
-
-    if last_score.get(mid) != formatted:
-        send_telegram(f"📡 *LIVE UPDATE*\n\n🏏 *{match['teams'][0].upper()}* 🆚 *{match['teams'][1].upper()}*\n\n━━━━━━━━━━━━━━\n{formatted}━━━━━━━━━━━━━━")
-        last_score[mid] = formatted
-        last_live_time[mid] = time.time()
-
-# 🏆 RESULT
-def post_result(match):
-    mid = match["id"]
-    if mid in sent_results:
-        return
-
-    status = match.get("status", "")
-    if "won" in status.lower():
-        t1, t2 = match["teams"]
-
-        send_telegram(f"🏆 *{status}*")
-
-        poster = create_poster(t1, t2, status)
-
-        caption = generate_text(f"{status} make exciting caption")
-
-        if not caption:
-            caption = status
-
-        send_photo(poster, f"🔥 {caption}")
-
-        sent_results.add(mid)
-
-# 🔁 LOOP
-while True:
-    try:
-        matches = requests.get(url).json().get("data", [])
-
-        selected = select_matches(matches)
-
-        if not selected:
-            post_engagement()
-
-        for match in selected:
-            post_prematch(match)
-            post_toss(match)
-            post_live_score(match)
-            post_result(match)
-
-        time.sleep(60)
-
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(60)
+# =========================
+# ▶️ START
+# =========================
+if __name__ == "__main__":
+    asyncio.run(run_bot())
